@@ -28,7 +28,17 @@ class AppWhitelist {
 
 	private readonly int $baseUrlLength;
 
-	public const WHITELIST_ALWAYS = 'core,theming,settings,avatar,files,heartbeat,dav,guests,impersonate,accessibility,terms_of_service,dashboard,weather_status,user_status,apporder,twofactor_totp,twofactor_webauthn,twofactor_backupcodes,twofactor_nextcloud_notification';
+	/**
+	 * Apps a guest may always reach, no matter what the administrator
+	 * configured.
+	 *
+	 * Two-factor provider apps are not listed here one by one, they are
+	 * recognised at runtime by isTwoFactorProviderApp(). The only exception are
+	 * providers that are registered through the bootstrap registration context
+	 * rather than declared in info.xml, because there is no public API to look
+	 * those up.
+	 */
+	public const WHITELIST_ALWAYS = 'core,theming,settings,avatar,files,heartbeat,dav,guests,impersonate,accessibility,terms_of_service,dashboard,weather_status,user_status,apporder,twofactor_backupcodes,twofactor_gateway';
 
 	public const DEFAULT_WHITELIST = 'files_trashbin,files_versions,files_sharing,files_texteditor,text,activity,firstrunwizard,photos,notifications,dashboard,user_status,weather_status';
 
@@ -48,7 +58,32 @@ class AppWhitelist {
 		$whitelist = $this->config->getAppWhitelist();
 		$alwaysEnabled = explode(',', self::WHITELIST_ALWAYS);
 
-		return in_array($appId, array_merge($whitelist, $alwaysEnabled), true);
+		if (in_array($appId, array_merge($whitelist, $alwaysEnabled), true)) {
+			return true;
+		}
+
+		return $this->isTwoFactorProviderApp($appId);
+	}
+
+	/**
+	 * Two-factor authentication has to keep working for guests, otherwise an
+	 * instance with enforced two-factor authentication locks them out. So every
+	 * app that provides a two-factor provider is allowed.
+	 *
+	 * This reads the same info.xml declaration the server's ProviderLoader
+	 * reads.
+	 */
+	private function isTwoFactorProviderApp(string $appId): bool {
+		if ($appId === '') {
+			return false;
+		}
+
+		$info = $this->appManager->getAppInfo($appId);
+		if ($info === null) {
+			return false;
+		}
+
+		return !empty($info['two-factor-providers']);
 	}
 
 	public function isWhitelistEnabled(): bool {
@@ -168,9 +203,12 @@ class AppWhitelist {
 	 * @return list<string>
 	 */
 	public function getWhitelistAbleApps(): array {
-		return array_values(array_diff(
+		$alwaysEnabled = explode(',', self::WHITELIST_ALWAYS);
+
+		return array_values(array_filter(
 			$this->appManager->getInstalledApps(),
-			explode(',', self::WHITELIST_ALWAYS)
+			fn (string $appId): bool => !in_array($appId, $alwaysEnabled, true)
+				&& !$this->isTwoFactorProviderApp($appId)
 		));
 	}
 }
